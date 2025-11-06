@@ -350,6 +350,63 @@
         .color-swatch:hover .color-tooltip {
             opacity: 1;
         }
+
+        .color-swatch.locked {
+            border: 3px solid #667eea;
+            box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+        }
+
+        .color-swatch.locked::before {
+            content: '🔒';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2em;
+            text-shadow: 0 0 3px white;
+            pointer-events: none;
+        }
+
+        .svg-color-cursor {
+            position: fixed;
+            pointer-events: none;
+            z-index: 10000;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 600;
+            white-space: nowrap;
+            font-family: 'Courier New', monospace;
+            display: none;
+            transform: translate(10px, 10px);
+        }
+
+        .svg-color-cursor.active {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .svg-color-cursor-swatch {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .preview-container svg * {
+            cursor: crosshair;
+        }
+
+        .locked-colors-info {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #667eea;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -386,6 +443,7 @@
                 <h3>Original Color Palette</h3>
                 <div class="color-count" id="originalColorCount"></div>
                 <div class="color-palette" id="originalPalette"></div>
+                <div class="locked-colors-info" id="lockedColorsInfo"></div>
             </div>
             <div class="palette-box">
                 <h3>Reduced Color Palette</h3>
@@ -406,13 +464,20 @@
         </div>
     </div>
 
+    <div class="svg-color-cursor" id="svgColorCursor">
+        <div class="svg-color-cursor-swatch" id="svgColorCursorSwatch"></div>
+        <span id="svgColorCursorText"></span>
+    </div>
+
     <script>
         // K-Means clustering implementation
         class KMeans {
-            constructor(k, maxIterations = 100) {
+            constructor(k, maxIterations = 100, lockedCentroids = []) {
                 this.k = k;
                 this.maxIterations = maxIterations;
                 this.centroids = [];
+                this.lockedCentroids = lockedCentroids; // Array of RGB arrays that should be kept as centroids
+                this.lockedCount = lockedCentroids.length;
             }
 
             // Calculate Euclidean distance
@@ -440,11 +505,22 @@
 
             // Initialize centroids using k-means++ algorithm
             initializeCentroids(points) {
-                // Choose first centroid randomly
-                this.centroids = [points[Math.floor(Math.random() * points.length)]];
+                // Start with locked centroids
+                this.centroids = [...this.lockedCentroids];
 
-                // Choose remaining centroids
-                for (let i = 1; i < this.k; i++) {
+                // If we already have enough locked centroids, we're done
+                if (this.centroids.length >= this.k) {
+                    this.centroids = this.centroids.slice(0, this.k);
+                    return;
+                }
+
+                // Choose first non-locked centroid randomly if we have no centroids yet
+                if (this.centroids.length === 0) {
+                    this.centroids = [points[Math.floor(Math.random() * points.length)]];
+                }
+
+                // Choose remaining centroids using k-means++
+                for (let i = this.centroids.length; i < this.k; i++) {
                     const distances = points.map(point => {
                         let minDist = Infinity;
                         for (const centroid of this.centroids) {
@@ -456,6 +532,7 @@
 
                     // Convert distances to probabilities
                     const sum = distances.reduce((a, b) => a + b, 0);
+                    if (sum === 0) break; // All points are already centroids
                     const probabilities = distances.map(d => d / sum);
 
                     // Choose next centroid based on probability
@@ -493,7 +570,10 @@
                     // Calculate new centroids
                     const newCentroids = [];
                     for (let i = 0; i < this.k; i++) {
-                        if (clusters[i].length === 0) {
+                        // Keep locked centroids fixed
+                        if (i < this.lockedCount) {
+                            newCentroids.push(this.lockedCentroids[i]);
+                        } else if (clusters[i].length === 0) {
                             newCentroids.push(this.centroids[i]);
                         } else {
                             const sum = clusters[i].reduce(
@@ -649,7 +729,7 @@
             }
 
             // Main reduction function
-            reduce(svgText, nColors) {
+            reduce(svgText, nColors, lockedColors = []) {
                 const parser = new DOMParser();
                 const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
 
@@ -664,8 +744,11 @@
                     throw new Error('No colors found in SVG');
                 }
 
-                // Apply K-Means clustering
-                const kmeans = new KMeans(Math.min(nColors, colors.length));
+                // Convert locked colors from hex to RGB
+                const lockedCentroids = lockedColors.map(hex => this.hexToRgb(hex));
+
+                // Apply K-Means clustering with locked colors
+                const kmeans = new KMeans(Math.min(nColors, colors.length), 100, lockedCentroids);
                 kmeans.fit(colors);
 
                 // Replace colors
@@ -684,6 +767,7 @@
                 this.originalSVG = null;
                 this.reducedSVG = null;
                 this.fileName = '';
+                this.lockedColors = new Set(); // Set of locked color hex codes
 
                 this.initElements();
                 this.attachEventListeners();
@@ -703,9 +787,13 @@
                 this.reducedPalette = document.getElementById('reducedPalette');
                 this.originalColorCount = document.getElementById('originalColorCount');
                 this.reducedColorCount = document.getElementById('reducedColorCount');
+                this.lockedColorsInfo = document.getElementById('lockedColorsInfo');
                 this.infoBox = document.getElementById('infoBox');
                 this.loading = document.getElementById('loading');
                 this.errorMessage = document.getElementById('errorMessage');
+                this.svgColorCursor = document.getElementById('svgColorCursor');
+                this.svgColorCursorSwatch = document.getElementById('svgColorCursorSwatch');
+                this.svgColorCursorText = document.getElementById('svgColorCursorText');
             }
 
             attachEventListeners() {
@@ -784,12 +872,18 @@
                 this.displayPalette(this.originalPalette, uniqueColors, this.originalColorCount);
                 this.paletteSection.classList.add('active');
 
+                // Add SVG interaction handlers
+                this.attachSVGInteractionHandlers();
+
                 // Clear reduced palette
                 this.reducedPalette.innerHTML = '<p style="color: #999;">Reduced palette will appear here</p>';
                 this.reducedColorCount.textContent = '';
+
+                // Update locked colors info
+                this.updateLockedColorsInfo();
             }
 
-            displayPalette(container, colors, countElement) {
+            displayPalette(container, colors, countElement, enableLocking = false) {
                 container.innerHTML = '';
                 countElement.textContent = `${colors.length} unique color${colors.length !== 1 ? 's' : ''}`;
 
@@ -797,12 +891,28 @@
                     const swatch = document.createElement('div');
                     swatch.className = 'color-swatch';
                     swatch.style.backgroundColor = color;
+                    swatch.dataset.color = color;
+
+                    // Check if this color is locked
+                    if (this.lockedColors.has(color.toUpperCase())) {
+                        swatch.classList.add('locked');
+                    }
 
                     const tooltip = document.createElement('div');
                     tooltip.className = 'color-tooltip';
                     tooltip.textContent = color.toUpperCase();
 
                     swatch.appendChild(tooltip);
+
+                    // Add click handler for locking colors (only on original palette)
+                    if (enableLocking || container === this.originalPalette) {
+                        swatch.style.cursor = 'pointer';
+                        swatch.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            this.toggleColorLock(color);
+                        });
+                    }
+
                     container.appendChild(swatch);
                 });
             }
@@ -815,6 +925,11 @@
                     return;
                 }
 
+                if (this.lockedColors.size > nColors) {
+                    this.showError(`You have ${this.lockedColors.size} locked colors but only requested ${nColors} colors. Please reduce locked colors or increase the target.`);
+                    return;
+                }
+
                 this.loading.classList.add('active');
                 this.processBtn.disabled = true;
                 this.hideError();
@@ -822,7 +937,9 @@
                 // Use setTimeout to allow UI to update
                 setTimeout(() => {
                     try {
-                        this.reducedSVG = this.reducer.reduce(this.originalSVG, nColors);
+                        // Pass locked colors to the reducer
+                        const lockedColorsArray = Array.from(this.lockedColors);
+                        this.reducedSVG = this.reducer.reduce(this.originalSVG, nColors, lockedColorsArray);
                         this.reducedPreview.innerHTML = this.reducedSVG;
                         this.downloadBtn.disabled = false;
 
@@ -834,7 +951,8 @@
 
                         this.displayPalette(this.reducedPalette, uniqueColors, this.reducedColorCount);
 
-                        this.showInfo(`Successfully reduced to ${uniqueColors.length} colors!`);
+                        const lockedInfo = this.lockedColors.size > 0 ? ` (${this.lockedColors.size} locked)` : '';
+                        this.showInfo(`Successfully reduced to ${uniqueColors.length} colors${lockedInfo}!`);
                     } catch (error) {
                         this.showError(`Error processing image: ${error.message}`);
                         console.error(error);
@@ -871,6 +989,115 @@
 
             hideError() {
                 this.errorMessage.classList.remove('active');
+            }
+
+            toggleColorLock(color) {
+                const colorUpper = color.toUpperCase();
+                const nColors = parseInt(this.colorCountInput.value);
+
+                if (this.lockedColors.has(colorUpper)) {
+                    // Unlock the color
+                    this.lockedColors.delete(colorUpper);
+                } else {
+                    // Check if we can lock more colors
+                    if (this.lockedColors.size >= nColors) {
+                        this.showError(`Cannot lock more than ${nColors} colors. Increase the target number or unlock other colors first.`);
+                        return;
+                    }
+                    // Lock the color
+                    this.lockedColors.add(colorUpper);
+                }
+
+                // Refresh the palette display
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(this.originalSVG, 'image/svg+xml');
+                const colors = this.reducer.extractColors(svgDoc);
+                const uniqueColors = this.reducer.getUniqueColors(colors);
+                this.displayPalette(this.originalPalette, uniqueColors, this.originalColorCount);
+
+                // Update info
+                this.updateLockedColorsInfo();
+                this.hideError();
+            }
+
+            updateLockedColorsInfo() {
+                if (this.lockedColors.size === 0) {
+                    this.lockedColorsInfo.textContent = 'Click colors to lock them for the reduction';
+                } else {
+                    const nColors = parseInt(this.colorCountInput.value);
+                    this.lockedColorsInfo.textContent = `🔒 ${this.lockedColors.size} / ${nColors} colors locked`;
+                }
+            }
+
+            attachSVGInteractionHandlers() {
+                const svgElement = this.originalPreview.querySelector('svg');
+                if (!svgElement) return;
+
+                // Get all elements with fill or stroke
+                const elements = svgElement.querySelectorAll('[fill], [stroke]');
+
+                elements.forEach(el => {
+                    // Mouse move handler - show color preview
+                    el.addEventListener('mousemove', (e) => {
+                        const color = this.getElementColor(el);
+                        if (color) {
+                            this.showColorCursor(e, color);
+                        }
+                    });
+
+                    // Mouse leave handler - hide cursor
+                    el.addEventListener('mouseleave', () => {
+                        this.hideColorCursor();
+                    });
+
+                    // Click handler - lock color
+                    el.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const color = this.getElementColor(el);
+                        if (color) {
+                            this.toggleColorLock(color);
+                        }
+                    });
+                });
+            }
+
+            getElementColor(element) {
+                // Try fill first
+                let color = element.getAttribute('fill');
+
+                // If no fill or fill is 'none', try stroke
+                if (!color || color === 'none') {
+                    color = element.getAttribute('stroke');
+                }
+
+                // Check style attribute
+                if (!color || color === 'none') {
+                    const style = element.getAttribute('style');
+                    if (style) {
+                        const fillMatch = style.match(/fill:\s*(#[0-9a-fA-F]{6})/);
+                        const strokeMatch = style.match(/stroke:\s*(#[0-9a-fA-F]{6})/);
+                        color = fillMatch ? fillMatch[1] : (strokeMatch ? strokeMatch[1] : null);
+                    }
+                }
+
+                // Only return if it's a valid hex color
+                if (color && color.startsWith('#') && color.length === 7) {
+                    return color.toUpperCase();
+                }
+
+                return null;
+            }
+
+            showColorCursor(event, color) {
+                this.svgColorCursor.classList.add('active');
+                this.svgColorCursorSwatch.style.backgroundColor = color;
+                this.svgColorCursorText.textContent = color;
+                this.svgColorCursor.style.left = event.clientX + 'px';
+                this.svgColorCursor.style.top = event.clientY + 'px';
+            }
+
+            hideColorCursor() {
+                this.svgColorCursor.classList.remove('active');
             }
         }
 
