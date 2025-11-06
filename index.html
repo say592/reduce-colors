@@ -148,6 +148,22 @@
             cursor: not-allowed;
         }
 
+        .btn-clear {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-clear:hover:not(:disabled) {
+            background: #c82333;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+        }
+
+        .btn-clear:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .preview-section {
             display: none;
             gap: 20px;
@@ -277,10 +293,44 @@
             background: #f9f9f9;
         }
 
-        .palette-box h3 {
+        .palette-box-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 15px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .palette-box h3 {
+            margin: 0;
             color: #333;
+            flex: 1;
             text-align: center;
+        }
+
+        .collapse-toggle {
+            font-size: 1.2em;
+            color: #667eea;
+            transition: transform 0.3s ease;
+            cursor: pointer;
+            padding: 5px;
+        }
+
+        .collapse-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .palette-box-content {
+            max-height: 1000px;
+            overflow: hidden;
+            transition: max-height 0.3s ease, opacity 0.3s ease;
+            opacity: 1;
+        }
+
+        .palette-box-content.collapsed {
+            max-height: 0;
+            opacity: 0;
         }
 
         .color-count {
@@ -431,6 +481,7 @@
             </div>
             <button class="btn btn-primary" id="processBtn" disabled>Reduce Colors</button>
             <button class="btn btn-secondary" id="downloadBtn" disabled>Download Result</button>
+            <button class="btn btn-clear" id="clearLockedBtn" disabled>Clear Locked Colors</button>
         </div>
 
         <div class="loading" id="loading">
@@ -440,15 +491,25 @@
 
         <div class="palette-section" id="paletteSection">
             <div class="palette-box">
-                <h3>Original Color Palette</h3>
-                <div class="color-count" id="originalColorCount"></div>
-                <div class="color-palette" id="originalPalette"></div>
-                <div class="locked-colors-info" id="lockedColorsInfo"></div>
+                <div class="palette-box-header" id="originalPaletteHeader">
+                    <h3>Original Color Palette</h3>
+                    <span class="collapse-toggle" id="originalCollapseToggle">▼</span>
+                </div>
+                <div class="palette-box-content" id="originalPaletteContent">
+                    <div class="color-count" id="originalColorCount"></div>
+                    <div class="color-palette" id="originalPalette"></div>
+                    <div class="locked-colors-info" id="lockedColorsInfo"></div>
+                </div>
             </div>
             <div class="palette-box">
-                <h3>Reduced Color Palette</h3>
-                <div class="color-count" id="reducedColorCount"></div>
-                <div class="color-palette" id="reducedPalette"></div>
+                <div class="palette-box-header" id="reducedPaletteHeader">
+                    <h3>Reduced Color Palette</h3>
+                    <span class="collapse-toggle" id="reducedCollapseToggle">▼</span>
+                </div>
+                <div class="palette-box-content" id="reducedPaletteContent">
+                    <div class="color-count" id="reducedColorCount"></div>
+                    <div class="color-palette" id="reducedPalette"></div>
+                </div>
             </div>
         </div>
 
@@ -779,6 +840,7 @@
                 this.colorCountInput = document.getElementById('colorCount');
                 this.processBtn = document.getElementById('processBtn');
                 this.downloadBtn = document.getElementById('downloadBtn');
+                this.clearLockedBtn = document.getElementById('clearLockedBtn');
                 this.originalPreview = document.getElementById('originalPreview');
                 this.reducedPreview = document.getElementById('reducedPreview');
                 this.previewSection = document.getElementById('previewSection');
@@ -794,6 +856,12 @@
                 this.svgColorCursor = document.getElementById('svgColorCursor');
                 this.svgColorCursorSwatch = document.getElementById('svgColorCursorSwatch');
                 this.svgColorCursorText = document.getElementById('svgColorCursorText');
+                this.originalPaletteHeader = document.getElementById('originalPaletteHeader');
+                this.reducedPaletteHeader = document.getElementById('reducedPaletteHeader');
+                this.originalPaletteContent = document.getElementById('originalPaletteContent');
+                this.reducedPaletteContent = document.getElementById('reducedPaletteContent');
+                this.originalCollapseToggle = document.getElementById('originalCollapseToggle');
+                this.reducedCollapseToggle = document.getElementById('reducedCollapseToggle');
             }
 
             attachEventListeners() {
@@ -825,6 +893,13 @@
 
                 // Download button
                 this.downloadBtn.addEventListener('click', () => this.downloadResult());
+
+                // Clear locked colors button
+                this.clearLockedBtn.addEventListener('click', () => this.clearLockedColors());
+
+                // Collapse toggle buttons
+                this.originalPaletteHeader.addEventListener('click', () => this.toggleCollapse('original'));
+                this.reducedPaletteHeader.addEventListener('click', () => this.toggleCollapse('reduced'));
             }
 
             handleFileSelect(e) {
@@ -879,8 +954,9 @@
                 this.reducedPalette.innerHTML = '<p style="color: #999;">Reduced palette will appear here</p>';
                 this.reducedColorCount.textContent = '';
 
-                // Update locked colors info
+                // Update locked colors info and button states
                 this.updateLockedColorsInfo();
+                this.updateClearButtonState();
             }
 
             displayPalette(container, colors, countElement, enableLocking = false) {
@@ -904,12 +980,22 @@
 
                     swatch.appendChild(tooltip);
 
-                    // Add click handler for locking colors (only on original palette)
-                    if (enableLocking || container === this.originalPalette) {
+                    // Add click handler for locking/unlocking colors
+                    // Original palette: toggle lock
+                    // Reduced palette: only unlock if locked
+                    if (enableLocking || container === this.originalPalette || container === this.reducedPalette) {
                         swatch.style.cursor = 'pointer';
                         swatch.addEventListener('click', (e) => {
                             e.stopPropagation();
-                            this.toggleColorLock(color);
+                            if (container === this.reducedPalette) {
+                                // On reduced palette, only unlock if the color is locked
+                                if (this.lockedColors.has(color.toUpperCase())) {
+                                    this.toggleColorLock(color);
+                                }
+                            } else {
+                                // On original palette, toggle lock/unlock
+                                this.toggleColorLock(color);
+                            }
                         });
                     }
 
@@ -1008,15 +1094,25 @@
                     this.lockedColors.add(colorUpper);
                 }
 
-                // Refresh the palette display
+                // Refresh the palette displays
                 const parser = new DOMParser();
                 const svgDoc = parser.parseFromString(this.originalSVG, 'image/svg+xml');
                 const colors = this.reducer.extractColors(svgDoc);
                 const uniqueColors = this.reducer.getUniqueColors(colors);
                 this.displayPalette(this.originalPalette, uniqueColors, this.originalColorCount);
 
-                // Update info
+                // Also refresh reduced palette if it exists
+                if (this.reducedSVG) {
+                    const reducedParser = new DOMParser();
+                    const reducedSvgDoc = reducedParser.parseFromString(this.reducedSVG, 'image/svg+xml');
+                    const reducedColors = this.reducer.extractColors(reducedSvgDoc);
+                    const reducedUniqueColors = this.reducer.getUniqueColors(reducedColors);
+                    this.displayPalette(this.reducedPalette, reducedUniqueColors, this.reducedColorCount);
+                }
+
+                // Update info and button states
                 this.updateLockedColorsInfo();
+                this.updateClearButtonState();
                 this.hideError();
             }
 
@@ -1026,6 +1122,45 @@
                 } else {
                     const nColors = parseInt(this.colorCountInput.value);
                     this.lockedColorsInfo.textContent = `🔒 ${this.lockedColors.size} / ${nColors} colors locked`;
+                }
+            }
+
+            updateClearButtonState() {
+                this.clearLockedBtn.disabled = this.lockedColors.size === 0;
+            }
+
+            clearLockedColors() {
+                this.lockedColors.clear();
+
+                // Refresh the palette displays
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(this.originalSVG, 'image/svg+xml');
+                const colors = this.reducer.extractColors(svgDoc);
+                const uniqueColors = this.reducer.getUniqueColors(colors);
+                this.displayPalette(this.originalPalette, uniqueColors, this.originalColorCount);
+
+                // Also refresh reduced palette if it exists
+                if (this.reducedSVG) {
+                    const reducedParser = new DOMParser();
+                    const reducedSvgDoc = reducedParser.parseFromString(this.reducedSVG, 'image/svg+xml');
+                    const reducedColors = this.reducer.extractColors(reducedSvgDoc);
+                    const reducedUniqueColors = this.reducer.getUniqueColors(reducedColors);
+                    this.displayPalette(this.reducedPalette, reducedUniqueColors, this.reducedColorCount);
+                }
+
+                // Update info and button states
+                this.updateLockedColorsInfo();
+                this.updateClearButtonState();
+                this.showInfo('All locked colors have been cleared');
+            }
+
+            toggleCollapse(section) {
+                if (section === 'original') {
+                    this.originalPaletteContent.classList.toggle('collapsed');
+                    this.originalCollapseToggle.classList.toggle('collapsed');
+                } else if (section === 'reduced') {
+                    this.reducedPaletteContent.classList.toggle('collapsed');
+                    this.reducedCollapseToggle.classList.toggle('collapsed');
                 }
             }
 
