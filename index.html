@@ -251,6 +251,105 @@
         .error-message.active {
             display: block;
         }
+
+        .palette-section {
+            display: none;
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .palette-section.active {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .palette-section.active {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .palette-box {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            background: #f9f9f9;
+        }
+
+        .palette-box h3 {
+            margin-bottom: 15px;
+            color: #333;
+            text-align: center;
+        }
+
+        .color-count {
+            text-align: center;
+            font-size: 0.95em;
+            color: #666;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+
+        .color-palette {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            padding: 15px;
+            background: white;
+            border-radius: 6px;
+            min-height: 80px;
+        }
+
+        .color-swatch {
+            width: 50px;
+            height: 50px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            position: relative;
+        }
+
+        .color-swatch:hover {
+            transform: scale(1.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+
+        .color-tooltip {
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: 600;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            margin-bottom: 8px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .color-tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.9);
+        }
+
+        .color-swatch:hover .color-tooltip {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -280,6 +379,19 @@
         <div class="loading" id="loading">
             <div class="spinner"></div>
             <p>Processing your SVG...</p>
+        </div>
+
+        <div class="palette-section" id="paletteSection">
+            <div class="palette-box">
+                <h3>Original Color Palette</h3>
+                <div class="color-count" id="originalColorCount"></div>
+                <div class="color-palette" id="originalPalette"></div>
+            </div>
+            <div class="palette-box">
+                <h3>Reduced Color Palette</h3>
+                <div class="color-count" id="reducedColorCount"></div>
+                <div class="color-palette" id="reducedPalette"></div>
+            </div>
         </div>
 
         <div class="preview-section" id="previewSection">
@@ -479,6 +591,16 @@
                 return colors;
             }
 
+            // Get unique colors from RGB array
+            getUniqueColors(colors) {
+                const uniqueMap = new Map();
+                colors.forEach(rgb => {
+                    const hex = this.rgbToHex(rgb);
+                    uniqueMap.set(hex, rgb);
+                });
+                return Array.from(uniqueMap.entries()).map(([hex, rgb]) => hex);
+            }
+
             // Replace colors in SVG
             replaceColors(svgDoc, kmeans) {
                 const elements = svgDoc.querySelectorAll('[fill], [stroke]');
@@ -576,6 +698,11 @@
                 this.originalPreview = document.getElementById('originalPreview');
                 this.reducedPreview = document.getElementById('reducedPreview');
                 this.previewSection = document.getElementById('previewSection');
+                this.paletteSection = document.getElementById('paletteSection');
+                this.originalPalette = document.getElementById('originalPalette');
+                this.reducedPalette = document.getElementById('reducedPalette');
+                this.originalColorCount = document.getElementById('originalColorCount');
+                this.reducedColorCount = document.getElementById('reducedColorCount');
                 this.infoBox = document.getElementById('infoBox');
                 this.loading = document.getElementById('loading');
                 this.errorMessage = document.getElementById('errorMessage');
@@ -647,6 +774,37 @@
                 this.originalPreview.innerHTML = this.originalSVG;
                 this.previewSection.classList.add('active');
                 this.reducedPreview.innerHTML = '<p style="color: #999;">Processed image will appear here</p>';
+
+                // Extract and display original colors
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(this.originalSVG, 'image/svg+xml');
+                const colors = this.reducer.extractColors(svgDoc);
+                const uniqueColors = this.reducer.getUniqueColors(colors);
+
+                this.displayPalette(this.originalPalette, uniqueColors, this.originalColorCount);
+                this.paletteSection.classList.add('active');
+
+                // Clear reduced palette
+                this.reducedPalette.innerHTML = '<p style="color: #999;">Reduced palette will appear here</p>';
+                this.reducedColorCount.textContent = '';
+            }
+
+            displayPalette(container, colors, countElement) {
+                container.innerHTML = '';
+                countElement.textContent = `${colors.length} unique color${colors.length !== 1 ? 's' : ''}`;
+
+                colors.forEach(color => {
+                    const swatch = document.createElement('div');
+                    swatch.className = 'color-swatch';
+                    swatch.style.backgroundColor = color;
+
+                    const tooltip = document.createElement('div');
+                    tooltip.className = 'color-tooltip';
+                    tooltip.textContent = color.toUpperCase();
+
+                    swatch.appendChild(tooltip);
+                    container.appendChild(swatch);
+                });
             }
 
             async processImage() {
@@ -667,7 +825,16 @@
                         this.reducedSVG = this.reducer.reduce(this.originalSVG, nColors);
                         this.reducedPreview.innerHTML = this.reducedSVG;
                         this.downloadBtn.disabled = false;
-                        this.showInfo(`Successfully reduced to ${nColors} colors!`);
+
+                        // Extract and display reduced colors
+                        const parser = new DOMParser();
+                        const svgDoc = parser.parseFromString(this.reducedSVG, 'image/svg+xml');
+                        const colors = this.reducer.extractColors(svgDoc);
+                        const uniqueColors = this.reducer.getUniqueColors(colors);
+
+                        this.displayPalette(this.reducedPalette, uniqueColors, this.reducedColorCount);
+
+                        this.showInfo(`Successfully reduced to ${uniqueColors.length} colors!`);
                     } catch (error) {
                         this.showError(`Error processing image: ${error.message}`);
                         console.error(error);
