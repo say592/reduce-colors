@@ -8,7 +8,7 @@ A user-friendly web interface is available that runs entirely in your browser. N
 
 ### Try it Online
 
-Visit the web interface: [https://YOUR-USERNAME.github.io/reduce-colors/](https://YOUR-USERNAME.github.io/reduce-colors/)
+Visit the web interface: [https://say592.github.io/reduce-colors/](https://say592.github.io/reduce-colors/)
 
 ### Features
 
